@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ACTORA Receipt Maker 2</title>
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --accent: #2980b9;
+        }
+        body { margin: 0; background: #eef2f5; font-family: 'Arial', sans-serif; }
+        * { box-sizing: border-box; }
+
+        /* --- LOGIN & UI --- */
+        #login-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #2c3e50; z-index: 9999; display: flex; justify-content: center; align-items: center;
+        }
+        .login-box { background: white; padding: 40px; border-radius: 8px; width: 350px; text-align: center; }
+        .login-box input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; }
+        
+        #app-container { display: none; max-width: 1000px; margin: 0 auto; padding: 20px; }
+        .tabs { display: flex; gap: 5px; margin-bottom: 20px; }
+        .tab-btn { padding: 12px 30px; background: #ccc; border: none; cursor: pointer; font-weight: bold; }
+        .tab-btn.active { background: var(--primary); color: white; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        .control-panel { background: white; padding: 20px; margin-bottom: 20px; border-radius: 5px; border: 1px solid #ddd; }
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+        .form-group label { display: block; font-size: 11px; font-weight: bold; color: #555; margin-bottom: 5px; }
+        .form-group input { width: 100%; padding: 8px; border: 1px solid #ccc; }
+        .btn { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; }
+
+        /* --- RECEIPT FORMAT (EXACT PDF MATCH) --- */
+        #receipt-wrap { background: white; padding: 10px; }
+        
+        .invoice-container {
+            width: 794px; /* Exact A4 Width in pixels */
+            margin: 0 auto;
+            border: 1.5px solid black;
+            color: #000;
+            font-size: 13px;
+            line-height: 1.2;
+            background: white;
+        }
+
+        .border-bottom { border-bottom: 1.5px solid black; }
+        .border-right { border-right: 1.5px solid black; }
+        .bold { font-weight: bold; }
+        .center { text-align: center; }
+        .right { text-align: right; }
+        .pad-10 { padding: 10px; }
+
+        .header-section { display: flex; }
+        .bill-to-col { width: 55%; padding: 10px; }
+        .seller-col { width: 45%; }
+
+        .invoice-details-table { width: 100%; border-collapse: collapse; }
+        .invoice-details-table td { border: 1.5px solid black; padding: 4px 8px; }
+
+        .main-table { width: 100%; border-collapse: collapse; }
+        .main-table th { border: 1.5px solid black; background: #f2f2f2; padding: 6px; font-size: 12px; }
+        .main-table td { border-right: 1.5px solid black; border-bottom: 0.5px solid #eee; padding: 6px; height: 30px; }
+        
+        .totals-grid { display: flex; border-top: 1.5px solid black; }
+        .amount-words { flex: 1; padding: 10px; border-right: 1.5px solid black; font-size: 11px; }
+        .totals-numbers { width: 35%; }
+        .totals-table { width: 100%; border-collapse: collapse; }
+        .totals-table td { padding: 5px 10px; text-align: right; border-bottom: 1px solid black; }
+
+        .footer-info { display: flex; border-top: 1.5px solid black; font-size: 11px; }
+        .footer-left { flex: 1; padding: 10px; border-right: 1.5px solid black; }
+        .footer-right { width: 35%; padding: 10px; text-align: center; display: flex; flex-direction: column; justify-content: space-between; }
+
+        .editable { background: #fffde7; padding: 0 4px; border-radius: 2px; transition: 0.2s; cursor: text; }
+        .editable:hover { background: #fff9c4; }
+
+        /* --- PRINT FIXES --- */
+        @media print {
+            body { background: white; }
+            #app-container { margin: 0; padding: 0; max-width: none; }
+            .no-print, .tabs, .control-panel, .btn, .no-print-btn { display: none !important; }
+            #receipt-wrap { padding: 0; }
+            .invoice-container { margin: 0; border: 1.5px solid black; width: 100%; page-break-inside: avoid; }
+            .editable { background: transparent !important; }
+            
+            /* Remove Website Domain/Header/Footer */
+            @page { margin: 0; size: auto; }
+            header, footer { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="login-overlay">
+        <div class="login-box">
+            <h2>ACTORA Receipt Maker 2</h2>
+            <input type="text" id="username" placeholder="Username">
+            <input type="password" id="password" placeholder="Password">
+            <button class="btn" style="width:100%" onclick="login()">Login</button>
+        </div>
+    </div>
+
+    <div id="app-container">
+        <div class="tabs no-print">
+            <button class="tab-btn active" onclick="showTab('maker')">Receipt Maker</button>
+            <button class="tab-btn" onclick="showTab('customers')">Add Customers</button>
+        </div>
+
+        <div id="maker" class="tab-content active">
+            <div class="control-panel no-print">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Search Customer</label>
+                        <input type="text" list="custList" id="custSearch" oninput="fillCustomer()" placeholder="Start typing...">
+                        <datalist id="custList"></datalist>
+                    </div>
+                    <div class="form-group">
+                        <label>Vehicle No.</label>
+                        <input type="text" oninput="document.getElementById('r-veh').innerText=this.value">
+                    </div>
+                </div>
+            </div>
+
+            <div id="receipt-wrap">
+                <div class="invoice-container">
+                    <div class="header-section border-bottom">
+                        <div class="bill-to-col border-right">
+                            <div class="bold">BILL TO</div>
+                            <div id="r-name" class="bold" style="font-size:16px; margin:5px 0;">CUSTOMER NAME</div>
+                            <div id="r-addr">Customer Address Details...</div>
+                            <div style="margin-top:5px;">Mobile: <span id="r-mob">0000000000</span></div>
+                            <div class="bold">GSTIN: <span id="r-gst">27XXXXX0000X1ZX</span></div>
+                        </div>
+                        <div class="seller-col">
+                            <div class="center border-bottom bold" style="background:#eee; padding:5px;">TAX INVOICE</div>
+                            <div class="pad-10 center">
+                                <div class="bold" style="font-size:18px;">SHRIJI ENTERPRISES</div>
+                                <div style="font-size:11px;">B3/18, SHRIRAM DARSHAN PHASE-2, KATRAJ, PUNE - 411 043</div>
+                                <div style="font-size:11px;">shrijienterprises111@gmail.com | 9822743677</div>
+                            </div>
+                            <table class="invoice-details-table">
+                                <tr><td>Invoice No.</td><td class="bold" id="r-inv">SE/2025-26/1021</td></tr>
+                                <tr><td>Dated:</td><td class="bold" id="r-date">03-02-26</td></tr>
+                                <tr><td>Vehicle No.</td><td class="bold" id="r-veh">-</td></tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="border-bottom pad-10" style="display:flex; justify-content:space-between;">
+                        <div>
+                            <div class="bold">SHIP TO</div>
+                            <div id="s-name" class="bold">CUSTOMER NAME</div>
+                            <div id="s-addr">Customer Location</div>
+                        </div>
+                        <div>
+                            <span class="bold">Payment Term:</span> 
+                            <span contenteditable="true" class="editable">Imeedet</span>
+                        </div>
+                    </div>
+
+                    <table class="main-table">
+                        <thead>
+                            <tr>
+                                <th style="width:40px">Sr.</th>
+                                <th style="text-align:left">Description of goods</th>
+                                <th style="width:100px">HSN/SAC</th>
+                                <th style="width:50px">per</th>
+                                <th style="width:80px">Quantity</th>
+                                <th style="width:80px">Rate</th>
+                                <th style="width:120px" class="right">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+
+                    <div class="no-print pad-10 center">
+                        <button class="btn" onclick="addItem()">+ Add Item</button>
+                    </div>
+
+                    <div class="totals-grid">
+                        <div class="amount-words">
+                            <div class="bold">Amount Chargeable (in words):</div>
+                            <div id="amt-words" style="margin-top:5px; font-style:italic;">Zero Only</div>
+                        </div>
+                        <div class="totals-numbers">
+                            <table class="totals-table">
+                                <tr><td>BASIC VALUE :</td><td id="v-basic">0.00</td></tr>
+                                <tr><td>CGST (<input type="number" id="c-rate" value="9" style="width:35px" oninput="calc()">%):</td><td id="v-cgst">0.00</td></tr>
+                                <tr><td>SGST (<input type="number" id="s-rate" value="9" style="width:35px" oninput="calc()">%):</td><td id="v-sgst">0.00</td></tr>
+                                <tr class="bold" style="background:#eee"><td>TOTAL :</td><td id="v-total">0.00</td></tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="footer-info">
+                        <div class="footer-left">
+                            <div class="bold">Declaration:</div>
+                            We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
+                            <div style="border:1px solid black; margin-top:10px; padding:5px;">
+                                <div class="bold">Company's Bank Details:</div>
+                                Bank Name: ICICI BANK | A/c No: 187705002369<br>
+                                Branch & IFS Code: ICIC0001877
+                            </div>
+                        </div>
+                        <div class="footer-right">
+                            <div class="bold">For SHRIJI ENTERPRISES</div>
+                            <div style="height:60px"></div>
+                            <div class="bold" style="border-top:1px solid black; padding-top:5px;">Auth. Signatory</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="center no-print" style="margin-top:20px;">
+                <button class="btn" style="background:#27ae60; padding:15px 40px;" onclick="window.print()">Download PDF</button>
+            </div>
+        </div>
+
+        <div id="customers" class="tab-content">
+            <div class="control-panel">
+                <h3>Add New Customer</h3>
+                <div class="form-grid">
+                    <input id="n-name" placeholder="Name">
+                    <input id="n-loc" placeholder="Location">
+                    <input id="n-mob" placeholder="Mobile">
+                    <input id="n-gst" placeholder="GSTIN">
+                </div>
+                <button class="btn" style="margin-top:15px" onclick="saveCustomer()">Save Customer</button>
+            </div>
+            <div id="cust-ui-list"></div>
+        </div>
+    </div>
+
+    <script>
+        function login() { 
+            document.getElementById('login-overlay').style.display='none'; 
+            document.getElementById('app-container').style.display='block';
+            init();
+        }
+
+        function showTab(id) {
+            document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        function init() {
+            addItem();
+            loadCust();
+            let seq = localStorage.getItem('seq') || 1020;
+            seq = parseInt(seq)+1;
+            document.getElementById('r-inv').innerText = "SE/2025-26/"+seq;
+            localStorage.setItem('seq', seq);
+        }
+
+        function saveCustomer() {
+            let db = JSON.parse(localStorage.getItem('db')||'[]');
+            db.push({name:document.getElementById('n-name').value, loc:document.getElementById('n-loc').value, mob:document.getElementById('n-mob').value, gst:document.getElementById('n-gst').value});
+            localStorage.setItem('db', JSON.stringify(db));
+            loadCust();
+            alert('Saved');
+        }
+
+        function loadCust() {
+            let db = JSON.parse(localStorage.getItem('db')||'[]');
+            let dl = document.getElementById('custList');
+            dl.innerHTML = '';
+            db.forEach(c => { let o = document.createElement('option'); o.value=c.name; dl.appendChild(o); });
+        }
+
+        function fillCustomer() {
+            let db = JSON.parse(localStorage.getItem('db')||'[]');
+            let c = db.find(x=>x.name === document.getElementById('custSearch').value);
+            if(c) {
+                document.getElementById('r-name').innerText = document.getElementById('s-name').innerText = c.name;
+                document.getElementById('r-addr').innerText = document.getElementById('s-addr').innerText = c.loc;
+                document.getElementById('r-mob').innerText = c.mob;
+                document.getElementById('r-gst').innerText = c.gst;
+            }
+        }
+
+        function addItem() {
+            let b = document.getElementById('tableBody');
+            let tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="center">${b.children.length+1}</td>
+                <td contenteditable="true" class="editable">Product Name</td>
+                <td contenteditable="true" class="editable">3902</td>
+                <td contenteditable="true" class="editable">Kg</td>
+                <td><input type="number" class="qty" value="0" oninput="calc()" style="width:100%; border:none"></td>
+                <td><input type="number" class="rate" value="0" oninput="calc()" style="width:100%; border:none"></td>
+                <td class="right row-total">0.00</td>
+            `;
+            b.appendChild(tr);
+        }
+
+        function calc() {
+            let total = 0;
+            document.querySelectorAll('#tableBody tr').forEach(tr => {
+                let q = parseFloat(tr.querySelector('.qty').value)||0;
+                let r = parseFloat(tr.querySelector('.rate').value)||0;
+                let row = q*r;
+                tr.querySelector('.row-total').innerText = row.toFixed(2);
+                total += row;
+            });
+            let c = total * (parseFloat(document.getElementById('c-rate').value)/100);
+            let s = total * (parseFloat(document.getElementById('s-rate').value)/100);
+            document.getElementById('v-basic').innerText = total.toFixed(2);
+            document.getElementById('v-cgst').innerText = c.toFixed(2);
+            document.getElementById('v-sgst').innerText = s.toFixed(2);
+            document.getElementById('v-total').innerText = (total+c+s).toFixed(2);
+        }
+    </script>
+</body>
+</html>
